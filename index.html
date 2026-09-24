@@ -409,10 +409,15 @@ let scannerStream=null, scannerActive=false, scannerFormId=null, scannerField=nu
 async function openScanner(formId, fieldName){
   scannerFormId=formId; scannerField=fieldName;
   document.getElementById('scannerModal').style.display='flex';
-  try{ scannerStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}}); }
+  if(!window.jsQR){
+    closeScanner();
+    setFlash('err','QR scanner library failed to load (check your internet connection or ad-blocker), then try again.');
+    return;
+  }
+  try{ scannerStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}}); }
   catch(e){
     try{ scannerStream = await navigator.mediaDevices.getUserMedia({video:true}); }
-    catch(e2){ closeScanner(); setFlash('err','Camera access was denied or is unavailable.'); return; }
+    catch(e2){ closeScanner(); setFlash('err','Camera access was denied, or this page is not served over HTTPS.'); return; }
   }
   document.getElementById('scannerVideo').srcObject=scannerStream;
   scannerActive=true; requestAnimationFrame(scanFrame);
@@ -429,7 +434,7 @@ function scanFrame(){
     canvas.width=video.videoWidth; canvas.height=video.videoHeight;
     const ctx=canvas.getContext('2d'); ctx.drawImage(video,0,0,canvas.width,canvas.height);
     const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
-    const code = window.jsQR ? jsQR(imageData.data, imageData.width, imageData.height) : null;
+    const code = window.jsQR ? jsQR(imageData.data, imageData.width, imageData.height, {inversionAttempts:'attemptBoth'}) : null;
     if(code && code.data){ handleScanResult(code.data); return; }
   }
   requestAnimationFrame(scanFrame);
