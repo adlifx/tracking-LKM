@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LKM Tracker — HQ</title>
+<style>
+:root{
+  --bg:#f5f6f8;--panel:#ffffff;--text:#1a1d23;--muted:#6b7280;--border:#e3e5e9;
+  --accent:#2563eb;--accent-text:#ffffff;--danger:#dc2626;--danger-bg:#fef2f2;
+  --ok:#16a34a;--ok-bg:#f0fdf4;--warn-bg:#fffbeb;--warn:#b45309;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115;--panel:#1a1d23;--text:#e8e9ec;--muted:#9aa0ab;--border:#2b2f38;
+    --accent:#3b82f6;--accent-text:#fff;--danger:#f87171;--danger-bg:#2a1516;
+    --ok:#4ade80;--ok-bg:#122016;--warn-bg:#2a2110;--warn:#facc15;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115;--panel:#1a1d23;--text:#e8e9ec;--muted:#9aa0ab;--border:#2b2f38;
+  --accent:#3b82f6;--accent-text:#fff;--danger:#f87171;--danger-bg:#2a1516;
+  --ok:#4ade80;--ok-bg:#122016;--warn-bg:#2a2110;--warn:#facc15;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100%;}
+.wrap{max-width:900px;margin:0 auto;padding:16px;}
+h1,h2,h3{margin:0 0 8px;}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px;}
+input,select{width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;}
+button{cursor:pointer;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;background:var(--accent);color:var(--accent-text);}
+button.secondary{background:var(--bg);color:var(--text);border:1px solid var(--border);}
+button.danger{background:var(--danger);color:#fff;}
+button:disabled{opacity:.5;cursor:not-allowed;}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px;}
+.tabs button{background:var(--panel);color:var(--muted);border:1px solid var(--border);white-space:nowrap;}
+.tabs button.active{background:var(--accent);color:var(--accent-text);border-color:var(--accent);}
+.stat{display:flex;flex-direction:column;padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:12px;min-width:120px;flex:1;}
+.stat b{font-size:24px;}
+.stat span{font-size:12px;color:var(--muted);}
+.grid{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+table{width:100%;border-collapse:collapse;font-size:14px;}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--border);}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600;}
+.badge.ok{background:var(--ok-bg);color:var(--ok);}
+.badge.warn{background:var(--warn-bg);color:var(--warn);}
+.badge.err{background:var(--danger-bg);color:var(--danger);}
+.msg{padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px;}
+.msg.err{background:var(--danger-bg);color:var(--danger);}
+.msg.ok{background:var(--ok-bg);color:var(--ok);}
+.muted{color:var(--muted);font-size:13px;}
+.scroll-x{overflow-x:auto;}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+.small{font-size:12px;color:var(--muted);}
+a.linklike{color:var(--accent);cursor:pointer;text-decoration:underline;background:none;border:none;padding:0;font-size:inherit;}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<div id="scannerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:16px;">
+  <video id="scannerVideo" autoplay playsinline muted style="max-width:92vw;max-height:65vh;border-radius:12px;background:#000;"></video>
+  <p style="color:#fff;font-size:13px;">Point the camera at the QR code</p>
+  <button type="button" onclick="closeScanner()">Cancel</button>
+</div>
+<canvas id="scannerCanvas" style="display:none;"></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script>
+// ---------- Config ----------
+const STAFF = [
+  {u:'admin', p:'admin123', name:'HQ Admin'},
+  {u:'hq1', p:'jpj2026', name:'HQ Officer 1'},
+  {u:'hq2', p:'jpj2026', name:'HQ Officer 2'},
+];
+let dbNs = null;
+let session = JSON.parse(sessionStorage.getItem('lkm_session')||'null');
+let route = 'dashboard';
+let flash = null;
+
+async function initDb(){
+  try{ dbNs = await claude.use('db'); }catch(e){ dbNs = null; }
+}
+
+function col(name){ return dbNs.collection(name); }
+
+async function getAllBoxes(){
+  if(!dbNs) return [];
+  const snap = await col('boxes').get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function getAllEnvelopes(){
+  if(!dbNs) return [];
+  const snap = await col('envelopes').get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+async function getAllDispatches(){
+  if(!dbNs) return [];
+  const snap = await col('dispatches').get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+}
+
+function setFlash(type,text){ flash={type,text}; render(); setTimeout(()=>{flash=null; render();},4000); }
+
+// ---------- Sequencing helpers ----------
+// Box N -> envelopes ((N-1)*envPerBox+1) .. (N*envPerBox), globally numbered (not reset per box).
+// Envelope M -> LKM ((M-1)*lkmPerEnv+1) .. (M*lkmPerEnv), formatted as prefix + zero-padded digits.
+function padNum(n,width){ return String(n).padStart(width,'0'); }
+function extractNumber(str){ const m=String(str).match(/\d+/); return m?parseInt(m[0],10):NaN; }
+function envRangeForBox(boxNum, envPerBox){ const s=(boxNum-1)*envPerBox+1; return [s, s+envPerBox-1]; }
+function lkmNumsForEnvelope(envNum, lkmPerEnv){ const s=(envNum-1)*lkmPerEnv+1; return [s, s+lkmPerEnv-1]; }
+function formatSerial(num, prefix, digits){ return prefix + padNum(num, digits); }
+
+// ---------- Auth ----------
+function tryLogin(u,p){
+  const s = STAFF.find(x=>x.u===u && x.p===p);
+  if(!s){ setFlash('err','Invalid username or password.'); return; }
+  session = {u:s.u, name:s.name};
+  sessionStorage.setItem('lkm_session', JSON.stringify(session));
+  route='dashboard'; render();
+}
+function logout(){ session=null; sessionStorage.removeItem('lkm_session'); render(); }
+
+// ---------- Views ----------
+function loginView(){
+  return `
+  <div class="wrap" style="max-width:380px;padding-top:60px;">
+    <div class="card">
+      <h2>📦 LKM Tracker — HQ Login</h2>
+      <p class="muted">For HQ JPJ staff use only.</p>
+      ${flash?`<div class="msg ${flash.type}">${esc(flash.text)}</div>`:''}
+      <form id="loginForm">
+        <label>Username</label>
+        <input name="u" autocomplete="username" required>
+        <label>Password</label>
+        <input name="p" type="password" autocomplete="current-password" required>
+        <div class="row" style="margin-top:14px;">
+          <button type="submit">Log in</button>
+        </div>
+      </form>
+      <p class="small" style="margin-top:14px;">Demo accounts: admin/admin123, hq1/jpj2026, hq2/jpj2026</p>
+    </div>
+  </div>`;
+}
+
+function tabsBar(){
+  const tabs = [
+    ['dashboard','Dashboard'],
+    ['receive','Receive Box'],
+    ['verify','Verify Envelope'],
+    ['inventory','Inventory'],
+    ['dispatch','Dispatch'],
+    ['branches','Branch Totals'],
+  ];
+  return `<div class="tabs">${tabs.map(([k,l])=>
+    `<button class="${route===k?'active':''}" onclick="go('${k}')">${l}</button>`
+  ).join('')}</div>`;
+}
+
+async function dashboardView(){
+  const boxes = await getAllBoxes();
+  const envs = await getAllEnvelopes();
+  const atHqBoxes = boxes.filter(b=>b.status!=='dispatched');
+  const atHqEnvs = envs.filter(e=>e.status==='at_hq');
+  const dispatchedEnvs = envs.filter(e=>e.status==='dispatched');
+  const lkmAtHq = atHqEnvs.reduce((s,e)=>s+(e.count||0),0);
+  const lkmDispatched = dispatchedEnvs.reduce((s,e)=>s+(e.count||0),0);
+  return `
+  <div class="grid">
+    <div class="stat"><b>${boxes.length}</b><span>Boxes received</span></div>
+    <div class="stat"><b>${envs.length}</b><span>Envelopes registered</span></div>
+    <div class="stat"><b>${lkmAtHq}</b><span>LKM at HQ</span></div>
+    <div class="stat"><b>${lkmDispatched}</b><span>LKM dispatched</span></div>
+  </div>
+  <div class="card">
+    <h3>Boxes still receiving</h3>
+    ${renderBoxTable(boxes.filter(b=>b.status==='receiving'))}
+  </div>
+  <div class="card">
+    <h3>Recent boxes</h3>
+    ${renderBoxTable(boxes.slice(-8).reverse())}
+  </div>`;
+}
+
+function renderBoxTable(boxes){
+  if(!boxes.length) return `<p class="muted">None.</p>`;
+  return `<div class="scroll-x"><table><thead><tr><th>Box #</th><th>Envelopes</th><th>Status</th></tr></thead><tbody>
+    ${boxes.map(b=>`<tr>
+      <td><a class="linklike" onclick="go('inventory','${esc(b.id)}')">#${b.boxNum} (${esc(b.id)})</a></td>
+      <td>${b.receivedEnvelopes||0} / ${b.expectedEnvelopes}</td>
+      <td>${statusBadge(b.status)}</td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function statusBadge(status){
+  if(status==='receiving') return `<span class="badge warn">Receiving</span>`;
+  if(status==='complete') return `<span class="badge ok">At HQ</span>`;
+  if(status==='dispatched') return `<span class="badge err">Dispatched</span>`;
+  if(status==='at_hq') return `<span class="badge ok">At HQ</span>`;
+  return `<span class="badge">${esc(status||'-')}</span>`;
+}
+
+// ---- Receive box flow: one scan, auto-fills every envelope + LKM inside ----
+let boxSubmitting = false;
+const DEFAULT_ENV_PER_BOX = 200, DEFAULT_LKM_PER_ENV = 50, DEFAULT_PREFIX = 'A', DEFAULT_DIGITS = 7;
+
+async function receiveView(){
+  return `
+  <div class="card">
+    <h2>Receive Box</h2>
+    <p class="muted">Scan the box once — every envelope and its LKM serial range inside is generated automatically.</p>
+    ${flash?`<div class="msg ${flash.type}">${esc(flash.text)}</div>`:''}
+    <form id="boxForm">
+      <label>Scan / enter Box QR code (must contain the box number)</label>
+      <div class="row">
+        <input name="boxCode" placeholder="e.g. BOX-000001 or just 1" required autofocus style="flex:1;" ${boxSubmitting?'disabled':''}>
+        <button type="button" class="secondary" onclick="openScanner('boxForm','boxCode')" ${boxSubmitting?'disabled':''}>📷 Scan</button>
+      </div>
+      <p class="small">Box #1 → envelopes 1–${DEFAULT_ENV_PER_BOX} → LKM ${DEFAULT_PREFIX}${padNum(1,DEFAULT_DIGITS)}–${DEFAULT_PREFIX}${padNum(DEFAULT_ENV_PER_BOX*DEFAULT_LKM_PER_ENV,DEFAULT_DIGITS)}. Box #2 continues automatically from there — fully automatic from the box number.</p>
+      <div class="row" style="margin-top:14px;"><button type="submit" ${boxSubmitting?'disabled':''}>${boxSubmitting?'Receiving box…':'Receive box'}</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <h3>Need to check a specific envelope?</h3>
+    <p class="muted">Use the <a class="linklike" onclick="go('verify')">Verify Envelope</a> tab to spot-check one without going through receiving.</p>
+  </div>`;
+}
+
+async function submitBoxForm(form){
+  const boxCode = form.boxCode.value.trim();
+  const envPerBox = DEFAULT_ENV_PER_BOX, lkmPerEnv = DEFAULT_LKM_PER_ENV, prefix = DEFAULT_PREFIX, digits = DEFAULT_DIGITS;
+  const boxNum = extractNumber(boxCode);
+  if(isNaN(boxNum)){ setFlash('err','Box QR code must contain a box number (e.g. "BOX-000001" or "1").'); return; }
+  const id = 'B'+padNum(boxNum,6);
+  const boxes = await getAllBoxes();
+  if(boxes.some(b=>b.id===id)){ setFlash('err',`Box #${boxNum} has already been received / registered.`); return; }
+  const [envStart, envEnd] = envRangeForBox(boxNum, envPerBox);
+  const [lkmStart] = lkmNumsForEnvelope(envStart, lkmPerEnv);
+  const [, lkmEnd] = lkmNumsForEnvelope(envEnd, lkmPerEnv);
+  const allEnvs = await getAllEnvelopes();
+  const clash = allEnvs.find(e=> (e.envNum>=envStart && e.envNum<=envEnd) || !(lkmEnd < e.lkmStartNum || e.lkmEndNum < lkmStart));
+  if(clash){
+    setFlash('err',`Cannot receive Box #${boxNum}: envelope #${clash.envNum} (from box ${esc(clash.boxQr)}) already occupies that envelope/LKM range. Check the box number or settings.`);
+    return;
+  }
+  boxSubmitting = true; render();
+  try{
+    const now = new Date().toISOString();
+    await col('boxes').doc(id).set({boxNum, envPerBox, lkmPerEnv, prefix, digits, envStart, envEnd, expectedEnvelopes:envPerBox, receivedEnvelopes:envPerBox, status:'complete', createdAt:now});
+    const writes=[];
+    for(let envNum=envStart; envNum<=envEnd; envNum++){
+      const [lkmS,lkmE] = lkmNumsForEnvelope(envNum, lkmPerEnv);
+      const eid = 'E'+padNum(envNum,6);
+      writes.push(col('envelopes').doc(eid).set({
+        envNum, boxQr:id, serialStart:formatSerial(lkmS,prefix,digits), serialEnd:formatSerial(lkmE,prefix,digits),
+        lkmStartNum:lkmS, lkmEndNum:lkmE, count:lkmPerEnv, status:'at_hq', receivedAt:now
+      }));
+    }
+    await Promise.all(writes);
+    setFlash('ok',`Box #${boxNum} received: ${envPerBox} envelopes (#${envStart}–#${envEnd}), ${envPerBox*lkmPerEnv} LKM (${formatSerial(lkmStart,prefix,digits)}–${formatSerial(lkmEnd,prefix,digits)}).`);
+  } finally {
+    boxSubmitting = false;
+    route='dashboard';
+    render();
+  }
+}
+
+// ---- Verify Envelope (spot-check, read-only, separate from receiving) ----
+let verifyResult = null;
+async function verifyView(){
+  return `
+  <div class="card">
+    <h2>Verify Envelope</h2>
+    <p class="muted">Spot-check any envelope or box already in the system — this does not affect receiving or inventory.</p>
+    ${flash?`<div class="msg ${flash.type}">${esc(flash.text)}</div>`:''}
+    <form id="verifyForm">
+      <label>Scan / enter Envelope QR or Box QR</label>
+      <div class="row">
+        <input name="code" autofocus placeholder="Scan or type QR code" style="flex:1;">
+        <button type="button" class="secondary" onclick="openScanner('verifyForm','code')">📷 Scan</button>
+      </div>
+      <div class="row" style="margin-top:10px;"><button type="submit">Check</button></div>
+    </form>
+  </div>
+  ${verifyResult ? renderVerifyResult(verifyResult) : ''}`;
+}
+function renderVerifyResult(r){
+  if(r.type==='envelope'){
+    const e=r.data;
+    return `<div class="card">
+      <h3>Envelope #${e.envNum}</h3>
+      <table>
+        <tr><th>Box</th><td>${r.box?`#${r.box.boxNum} (${esc(r.box.id)})`:esc(e.boxQr)}</td></tr>
+        <tr><th>Serial range</th><td>${esc(e.serialStart)} – ${esc(e.serialEnd)}</td></tr>
+        <tr><th>Qty</th><td>${e.count}</td></tr>
+        <tr><th>Status</th><td>${statusBadge(e.status)}</td></tr>
+        <tr><th>Branch</th><td>${esc(e.branch||'-')}</td></tr>
+      </table>
+    </div>`;
+  }
+  if(r.type==='box'){
+    const b=r.data;
+    return `<div class="card">
+      <h3>Box #${b.boxNum} (${esc(b.id)})</h3>
+      <table>
+        <tr><th>Envelope range</th><td>#${b.envStart} – #${b.envEnd}</td></tr>
+        <tr><th>Received</th><td>${b.receivedEnvelopes}/${b.expectedEnvelopes}</td></tr>
+        <tr><th>Status</th><td>${statusBadge(b.status)}</td></tr>
+      </table>
+    </div>`;
+  }
+  return `<div class="card"><p class="muted">Nothing found for that code.</p></div>`;
+}
+async function verifyCode(code){
+  code = code.trim();
+  const n = extractNumber(code);
+  if(isNaN(n)){ setFlash('err',`No number found in "${code}".`); verifyResult=null; return; }
+  const envs = await getAllEnvelopes();
+  const env = envs.find(e=>e.envNum===n);
+  if(env){
+    const boxes = await getAllBoxes();
+    verifyResult = {type:'envelope', data:env, box:boxes.find(b=>b.id===env.boxQr)};
+    return;
+  }
+  const boxes = await getAllBoxes();
+  const box = boxes.find(b=>b.boxNum===n);
+  if(box){ verifyResult = {type:'box', data:box}; return; }
+  verifyResult = {type:'none'};
+  setFlash('err',`No envelope or box found with number ${n}.`);
+}
+
+// ---- Inventory browse ----
+let inventoryFocusBox = null;
+async function inventoryView(focusId){
+  if(focusId) inventoryFocusBox = focusId;
+  const boxes = await getAllBoxes();
+  const envs = await getAllEnvelopes();
+  return `
+  <div class="card">
+    <h2>Inventory</h2>
+    <div class="scroll-x"><table><thead><tr><th>Box #</th><th>Envelopes</th><th>LKM total</th><th>Status</th><th></th></tr></thead><tbody>
+    ${boxes.map(b=>{
+      const be = envs.filter(e=>e.boxQr===b.id).sort((a,b2)=>a.envNum-b2.envNum);
+      const lkmTotal = be.reduce((s,e)=>s+(e.count||0),0);
+      return `<tr>
+        <td>#${b.boxNum} (${esc(b.id)})</td>
+        <td>${b.receivedEnvelopes||0}/${b.expectedEnvelopes}</td>
+        <td>${lkmTotal}</td>
+        <td>${statusBadge(b.status)}</td>
+        <td><a class="linklike" onclick="toggleBoxDetail('${esc(b.id)}')">${inventoryFocusBox===b.id?'Hide':'View'}</a></td>
+      </tr>
+      ${inventoryFocusBox===b.id ? `<tr><td colspan="5">
+        <div class="scroll-x"><table><thead><tr><th>Envelope #</th><th>Serial range</th><th>Qty</th><th>Status</th><th>Branch</th></tr></thead><tbody>
+        ${be.map(e=>`<tr><td>${e.envNum}</td><td>${esc(e.serialStart)}–${esc(e.serialEnd)}</td><td>${e.count}</td><td>${statusBadge(e.status)}</td><td>${esc(e.branch||'-')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No envelopes yet.</td></tr>'}
+        </tbody></table></div>
+      </td></tr>`:''}`;
+    }).join('') || '<tr><td colspan="5" class="muted">No boxes received yet.</td></tr>'}
+    </tbody></table></div>
+  </div>`;
+}
+function toggleBoxDetail(id){ inventoryFocusBox = inventoryFocusBox===id ? null : id; render(); }
+
+// ---- Dispatch ----
+let dispatchSelection = new Set();
+async function dispatchView(){
+  const envs = (await getAllEnvelopes()).filter(e=>e.status==='at_hq');
+  const boxes = await getAllBoxes();
+  return `
+  <div class="card">
+    <h2>Dispatch to Branch</h2>
+    ${flash?`<div class="msg ${flash.type}">${esc(flash.text)}</div>`:''}
+    <form id="scanDispatchForm">
+      <label>Scan Box QR or Envelope QR to add to shipment</label>
+      <div class="row">
+        <input name="code" autofocus placeholder="Scan or type QR code" style="flex:1;">
+        <button type="button" class="secondary" onclick="openScanner('scanDispatchForm','code')">📷 Scan</button>
+      </div>
+      <div class="row" style="margin-top:10px;"><button type="submit">Add</button></div>
+    </form>
+    <h3 style="margin-top:16px;">Selected for dispatch (${dispatchSelection.size} envelope${dispatchSelection.size===1?'':'s'}, ${sumSelected(envs)} LKM)</h3>
+    ${dispatchSelection.size ? `<div class="scroll-x"><table><thead><tr><th>Envelope #</th><th>Box</th><th>Serial range</th><th>Qty</th></tr></thead><tbody>
+      ${[...dispatchSelection].map(id=>{ const e=envs.find(x=>x.id===id); if(!e) return ''; return `<tr><td>${e.envNum}</td><td>${esc(e.boxQr)}</td><td>${esc(e.serialStart)}–${esc(e.serialEnd)}</td><td>${e.count}</td></tr>`;}).join('')}
+    </tbody></table></div>` : `<p class="muted">Nothing selected yet.</p>`}
+    <form id="confirmDispatchForm" style="margin-top:14px;">
+      <label>Destination branch</label>
+      <input name="branch" placeholder="e.g. JPJ Cawangan Shah Alam" required>
+      <div class="row" style="margin-top:12px;">
+        <button type="submit" ${dispatchSelection.size?'':'disabled'}>Confirm dispatch</button>
+        <button type="button" class="secondary" onclick="dispatchSelection=new Set();render();">Clear selection</button>
+      </div>
+    </form>
+  </div>`;
+}
+function sumSelected(envs){ let s=0; dispatchSelection.forEach(id=>{const e=envs.find(x=>x.id===id); if(e) s+=e.count;}); return s; }
+
+async function addToDispatch(code){
+  code = code.trim();
+  const n = extractNumber(code);
+  if(isNaN(n)){ setFlash('err',`No box or envelope number found in "${code}".`); return; }
+  const boxes = await getAllBoxes();
+  const envs = await getAllEnvelopes();
+  const box = boxes.find(b=>b.boxNum===n);
+  if(box){
+    const be = envs.filter(e=>e.boxQr===box.id && e.status==='at_hq');
+    if(!be.length){ setFlash('err',`Box #${n} has no envelopes at HQ to dispatch.`); return; }
+    be.forEach(e=>dispatchSelection.add(e.id));
+    setFlash('ok',`Added ${be.length} envelope(s) from Box #${n}.`);
+    return;
+  }
+  const env = envs.find(e=>e.envNum===n);
+  if(env){
+    if(env.status!=='at_hq'){ setFlash('err',`Envelope #${n} is not available at HQ (status: ${env.status}).`); return; }
+    dispatchSelection.add(env.id);
+    setFlash('ok',`Added envelope #${n}.`);
+    return;
+  }
+  setFlash('err',`No box or envelope found with number ${n}.`);
+}
+
+async function confirmDispatch(branch){
+  if(!dispatchSelection.size) return;
+  const envs = await getAllEnvelopes();
+  const selected = envs.filter(e=>dispatchSelection.has(e.id));
+  const total = selected.reduce((s,e)=>s+e.count,0);
+  const now = new Date().toISOString();
+  for(const e of selected){
+    await col('envelopes').doc(e.id).update({status:'dispatched', branch, dispatchedAt:now});
+  }
+  // update box statuses: if all envelopes of a box are dispatched, mark box dispatched
+  const boxes = await getAllBoxes();
+  const allEnvs = await getAllEnvelopes();
+  for(const b of boxes){
+    const be = allEnvs.map(e=> dispatchSelection.has(e.id)?{...e,status:'dispatched',branch,dispatchedAt:now}:e ).filter(e=>e.boxQr===b.id);
+    if(be.length && be.every(e=>e.status==='dispatched')){
+      await col('boxes').doc(b.id).update({status:'dispatched'});
+    }
+  }
+  await col('dispatches').doc('D'+Date.now()).set({branch, envelopeQrs:[...dispatchSelection], totalLkm:total, date:now});
+  dispatchSelection = new Set();
+  setFlash('ok',`Dispatched ${selected.length} envelope(s), ${total} LKM, to "${branch}".`);
+  route='branches'; render();
+}
+
+// ---- Branch totals ----
+async function branchesView(){
+  const dispatches = await getAllDispatches();
+  const byBranch = {};
+  dispatches.forEach(d=>{ byBranch[d.branch] = byBranch[d.branch]||{envelopes:0,lkm:0,shipments:0}; byBranch[d.branch].envelopes+=d.envelopeQrs.length; byBranch[d.branch].lkm+=d.totalLkm; byBranch[d.branch].shipments+=1; });
+  const branches = Object.keys(byBranch);
+  return `
+  <div class="card">
+    <h2>Branch Totals</h2>
+    ${branches.length? `<div class="scroll-x"><table><thead><tr><th>Branch</th><th>Shipments</th><th>Envelopes sent</th><th>LKM total</th></tr></thead><tbody>
+      ${branches.map(b=>`<tr><td>${esc(b)}</td><td>${byBranch[b].shipments}</td><td>${byBranch[b].envelopes}</td><td>${byBranch[b].lkm}</td></tr>`).join('')}
+    </tbody></table></div>` : `<p class="muted">No dispatches yet.</p>`}
+  </div>
+  <div class="card">
+    <h3>Dispatch history</h3>
+    ${dispatches.length? `<div class="scroll-x"><table><thead><tr><th>Date</th><th>Branch</th><th>Envelopes</th><th>LKM</th></tr></thead><tbody>
+      ${dispatches.map(d=>`<tr><td>${new Date(d.date).toLocaleString()}</td><td>${esc(d.branch)}</td><td>${d.envelopeQrs.length}</td><td>${d.totalLkm}</td></tr>`).join('')}
+    </tbody></table></div>` : `<p class="muted">None.</p>`}
+  </div>`;
+}
+
+// ---------- QR camera scanner ----------
+let scannerStream=null, scannerActive=false, scannerFormId=null, scannerField=null;
+
+async function openScanner(formId, fieldName){
+  scannerFormId=formId; scannerField=fieldName;
+  const modal=document.getElementById('scannerModal');
+  modal.style.display='flex';
+  try{
+    scannerStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
+  }catch(e){
+    try{ scannerStream = await navigator.mediaDevices.getUserMedia({video:true}); }
+    catch(e2){ closeScanner(); setFlash('err','Camera access was denied or is unavailable on this device.'); render(); return; }
+  }
+  const video=document.getElementById('scannerVideo');
+  video.srcObject=scannerStream;
+  scannerActive=true;
+  requestAnimationFrame(scanFrame);
+}
+function closeScanner(){
+  scannerActive=false;
+  if(scannerStream){ scannerStream.getTracks().forEach(t=>t.stop()); scannerStream=null; }
+  document.getElementById('scannerModal').style.display='none';
+}
+function scanFrame(){
+  if(!scannerActive) return;
+  const video=document.getElementById('scannerVideo');
+  const canvas=document.getElementById('scannerCanvas');
+  if(video.readyState===video.HAVE_ENOUGH_DATA){
+    canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+    const ctx=canvas.getContext('2d');
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const code = window.jsQR ? jsQR(imageData.data, imageData.width, imageData.height) : null;
+    if(code && code.data){ handleScanResult(code.data); return; }
+  }
+  requestAnimationFrame(scanFrame);
+}
+function handleScanResult(data){
+  closeScanner();
+  const form=document.getElementById(scannerFormId);
+  if(!form || !form[scannerField]) return;
+  form[scannerField].value = data.split('|')[0].trim();
+}
+
+// ---------- Router / render ----------
+function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function go(r,arg){ route=r; if(r==='inventory'&&arg) inventoryFocusBox=arg; if(r==='receive') {} ; render(); }
+
+async function render(){
+  const app = document.getElementById('app');
+  if(!session){ app.innerHTML = loginView(); attachLoginHandlers(); return; }
+  if(!dbNs){
+    app.innerHTML = `<div class="wrap"><div class="card"><h2>⚠️ Storage unavailable</h2><p class="muted">This page needs the database capability to store inventory. Please reopen it from Claude.</p></div></div>`;
+    return;
+  }
+  let body='';
+  if(route==='dashboard') body = await dashboardView();
+  else if(route==='receive') body = await receiveView();
+  else if(route==='verify') body = await verifyView();
+  else if(route==='inventory') body = await inventoryView();
+  else if(route==='dispatch') body = await dispatchView();
+  else if(route==='branches') body = await branchesView();
+
+  app.innerHTML = `
+    <div class="topbar">
+      <h1 style="font-size:18px;">📦 LKM Tracker — HQ</h1>
+      <div class="row">
+        <span class="small">${esc(session.name)}</span>
+        <button class="secondary" onclick="logout()">Log out</button>
+      </div>
+    </div>
+    ${tabsBar()}
+    ${body}
+  `;
+  attachHandlers();
+}
+
+function attachLoginHandlers(){
+  const f = document.getElementById('loginForm');
+  if(f) f.addEventListener('submit', e=>{ e.preventDefault(); tryLogin(f.u.value.trim(), f.p.value); });
+}
+
+function attachHandlers(){
+  const bf = document.getElementById('boxForm');
+  if(bf) bf.addEventListener('submit', e=>{ e.preventDefault(); submitBoxForm(bf); });
+  const vf = document.getElementById('verifyForm');
+  if(vf) vf.addEventListener('submit', async e=>{ e.preventDefault(); await verifyCode(vf.code.value); render(); });
+  const sf = document.getElementById('scanDispatchForm');
+  if(sf) sf.addEventListener('submit', async e=>{ e.preventDefault(); await addToDispatch(sf.code.value); sf.reset(); render(); });
+  const cf = document.getElementById('confirmDispatchForm');
+  if(cf) cf.addEventListener('submit', e=>{ e.preventDefault(); confirmDispatch(cf.branch.value.trim()); });
+}
+
+(async function main(){
+  await initDb();
+  render();
+})();
+</script>
+</body>
+</html>
